@@ -3,7 +3,7 @@ import {taskDepth, withTreeTask, parentSelect, renderTaskTree, bindTaskTree, mov
 import * as api from './team-api.js';
 const $=s=>document.querySelector(s),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={todo:'待開始',doing:'進行中',done:'已完成'},roles={owner:'擁有者',editor:'共同編輯',viewer:'檢視'};
-let newParent=null;
+let newParent=null,accessStatus=null,inviteFlow=false;
 let me=null,projects=[],selected=null,versions=[],events=[],mode='',taskId=null,busy=false;
 function message(text){$('#team-message').textContent=text;}
 async function action(fn){if(busy)return;busy=true;const disabled=[...document.querySelectorAll('button')].map(el=>[el,el.disabled]);disabled.forEach(([el])=>el.disabled=true);try{message('');await fn();}catch(e){message(teamErrorMessage(e));}finally{busy=false;disabled.forEach(([el,value])=>el.disabled=value);}}
@@ -19,7 +19,7 @@ function field(name,label,value='',type='text',required=false){return `<label>${
 function openEditor(next,id=null,parentId=null){if(busy)return;mode=next;taskId=id;newParent=parentId;const task=selected?.document.tasks.find(t=>t.id===id)||{id:'__new_task__',parentId:newParent};$('#shared-form').reset();let html='';
  if(next==='new-project'||next==='edit-project'){const p=next==='edit-project'?selected.document:{};html=field('name','專案名稱',p.name||'','text',true)+`<label>專案說明<textarea name="description" maxlength="3000">${esc(p.description||'')}</textarea></label>`;}
  if(next==='new-task'||next==='edit-task'){html=parentSelect(selected.document.tasks,task)+field('title','任務名稱',task.title||'','text',true)+`<label>任務說明<textarea name="description" maxlength="3000">${esc(task.description||'')}</textarea></label>`+field('assignee','負責人',task.assignee||'')+field('start','起始日',task.start||'','date')+field('due','截止日',task.due||'','date')+`<label>狀態<select name="status">${Object.entries(labels).map(([key,label])=>`<option value="${key}" ${task.status===key?'selected':''}>${label}</option>`).join('')}</select></label>`;}
- if(next==='member'){html=field('email','同事已註冊的 Email','','email',true)+'<label>權限<select name="role"><option value="editor">共同編輯</option><option value="viewer">僅檢視</option><option value="remove">移除權限</option></select></label><p class="fine">不會寄送邀請信；請先將此網站網址提供給同事，請對方註冊並驗證帳號。</p>';}
+ if(next==='member'){html=field('email','同事已獲准使用的 Email','','email',true)+'<label>權限<select name="role"><option value="editor">共同編輯</option><option value="viewer">僅檢視</option><option value="remove">移除權限</option></select></label><p class="fine">專案共享不會寄送系統邀請。請先由系統管理者核准對方並完成首次登入設定。</p>';}
  if(next==='restore'){html=field('point','還原時間（台北時間）','','datetime-local',true)+'<p class="fine">將還原為此時間之前最後一個已儲存版本。只還原專案與任務內容，不還原成員權限或刪除歷史。</p>';}
  $('#shared-title').textContent=({'new-project':'建立專案','edit-project':'編輯專案','new-task':'新增任務','edit-task':'編輯任務',member:'成員權限',restore:'還原到時間點'})[next];$('#shared-fields').innerHTML=html;$('#shared-form').elements.reason.parentElement.hidden=next==='member';$('#shared-form').elements.reason.required=next!=='member';$('#shared-editor').showModal();
 }
@@ -37,11 +37,25 @@ $('#shared-detail').onclick=e=>{const b=e.target.closest('button');if(!b)return;
  if(b.dataset.restoreVersion)action(async()=>{const v=versions.find(v=>String(v.id)===b.dataset.restoreVersion);if(!confirm(`將專案內容還原為 v${v.revision}，現有內容會保留於歷史紀錄。是否繼續？`))return;const reason=prompt('請填寫還原原因');if(!reason?.trim())return;const p=await api.rpc('team_restore',{pid:selected.id,expected_revision:selected.revision,point_in_time:v.created_at,change_reason:reason});await loadProjects(p.id);});
 };
 $('#new-project').onclick=()=>openEditor('new-project');$('#close-editor').onclick=()=>$('#shared-editor').close();
-async function enter(){me=await api.user();$('#identity').textContent=me.email;$('#auth').hidden=true;$('#workspace').hidden=false;$('#signout').hidden=false;await loadProjects();}
+function hideSpaces(){for(const id of ['auth','workspace','onboarding','denied','access-admin'])$('#'+id).hidden=true;}
+async function loadAccess(){const rows=await api.query('team_access?select=email,role,active,updated_at&order=updated_at.desc');$('#access-table').innerHTML=`<table class="task-list"><thead><tr><th>Email</th><th>使用權</th><th>管理</th></tr></thead><tbody>${rows.map(a=>`<tr><td>${esc(a.email)}</td><td>${a.role==='admin'?'管理者':a.active?'已核准':'已停用'}</td><td>${a.role==='admin'?'由資料庫管理':`<button class="secondary" data-access-email="${esc(a.email)}" data-access-enabled="${!a.active}">${a.active?'停用':'重新核准'}</button>`}</td></tr>`).join('')}</tbody></table>`;}
+async function enter(){
+ me=await api.user();hideSpaces();$('#identity').textContent=me.email;$('#signout').hidden=false;
+ try{accessStatus=await api.rpc('team_access_status',{});}catch{throw Error('邀請制尚未完成資料庫設定，請管理者先執行 invite-only.sql 與 bootstrap-admin.sql。');}
+ if(!accessStatus.allowed){$('#denied').hidden=false;return;}
+ if(!accessStatus.ready||inviteFlow){$('#onboarding').hidden=false;$('#profile-form').elements.displayName.value=accessStatus.display_name||'';return;}
+ $('#identity').textContent=accessStatus.display_name+' · '+me.email;$('#workspace').hidden=false;await loadProjects();
+ if(accessStatus.admin){$('#access-admin').hidden=false;await loadAccess();}
+}
 $('#auth-form').onsubmit=e=>{e.preventDefault();action(async()=>{const f=e.target.elements;await api.login(f.email.value,f.password.value);f.password.value='';await enter();});};
-$('#signup').onclick=()=>{const form=$('#auth-form');if(!form.reportValidity())return;action(async()=>{await api.signup(form.elements.email.value,form.elements.password.value);form.elements.password.value='';message('註冊請求已送出，請檢查 Email 完成驗證後再登入。若已註冊，請直接登入。');});};
+$('#profile-form').onsubmit=e=>{e.preventDefault();const f=e.target.elements;f.confirmPassword.setCustomValidity('');if(f.newPassword.value!==f.confirmPassword.value){f.confirmPassword.setCustomValidity('兩次輸入的密碼不同');f.confirmPassword.reportValidity();return;}if(f.displayName.value.trim().length<2){message('個人顯示名稱至少需要 2 字');return;}action(async()=>{await api.finishProfile(f.displayName.value,f.newPassword.value);f.newPassword.value='';f.confirmPassword.value='';inviteFlow=false;await enter();});};
+$('#profile-form').elements.confirmPassword.oninput=e=>e.target.setCustomValidity('');
+$('#profile-form').elements.newPassword.oninput=()=>$('#profile-form').elements.confirmPassword.setCustomValidity('');
+$('#invite-form').onsubmit=e=>{e.preventDefault();action(async()=>{const result=await api.invite(e.target.elements.inviteEmail.value);await loadAccess();message(result.message);if(result.delivered)e.target.reset();});};
+$('#refresh-access').onclick=()=>action(loadAccess);
+$('#access-table').onclick=e=>{const b=e.target.closest('[data-access-email]');if(!b)return;action(async()=>{const enabled=b.dataset.accessEnabled==='true';if(!confirm(`${enabled?'核准':'停用'} ${b.dataset.accessEmail} 的系統使用權？`))return;await api.rpc('team_access_set',{target_email:b.dataset.accessEmail,enabled});await loadAccess();message(enabled?'已核准；若尚無帳號，請使用上方邀請功能寄信。':'已停用，後端將拒絕該帳號後續存取。');});};
 $('#signout').onclick=()=>action(async()=>{try{await api.signout();}finally{location.reload();}});
-if(!api.configured())$('#setup').hidden=false;else{try{await enter();}catch{$('#workspace').hidden=true;$('#auth').hidden=false;$('#signout').hidden=true;$('#identity').textContent='';}}
+if(!api.configured())$('#setup').hidden=false;else{try{inviteFlow=await api.consumeInvite();await enter();}catch(error){hideSpaces();$('#auth').hidden=false;$('#signout').hidden=false;$('#identity').textContent='';if(error.message!=='請先登入')message(teamErrorMessage(error));}}
 
 bindTaskTree($('#shared-detail'),{
  getTasks:()=>selected?.document.tasks||[],

@@ -1,0 +1,21 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import {PGlite} from '@electric-sql/pglite';
+const admin='11111111-1111-4111-8111-111111111111',member='22222222-2222-4222-8222-222222222222',stranger='33333333-3333-4333-8333-333333333333';
+test('invite-only access is enforced for reads, RPC writes, onboarding, revocation and audit',async()=>{
+ const db=new PGlite();try{
+ await db.exec(`create role anon;create role authenticated;create schema auth;create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,encrypted_password text);create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;grant usage on schema auth to authenticated;grant execute on function auth.uid() to authenticated;`);
+ await db.query("insert into auth.users values($1,'ayers1101@gmail.com',now(),'hash'),($2,'member@example.com',now(),''),($3,'stranger@example.com',now(),'hash')",[admin,member,stranger]);
+ for(const name of ['schema.sql','invite-only.sql','bootstrap-admin.sql'])await db.exec(await readFile(new URL('../supabase/'+name,import.meta.url),'utf8'));
+ // The access migration is safe to reapply without destroying the original guarded implementation.
+ await db.exec(await readFile(new URL('../supabase/invite-only.sql',import.meta.url),'utf8'));
+ async function as(id){await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[id]);await db.exec('set role authenticated');}
+ const doc=JSON.stringify({name:'Private',tasks:[]});
+ await as(admin);let status=(await db.query('select public.team_access_status() as s')).rows[0].s;assert.equal(status.allowed,true);assert.equal(status.ready,false);await assert.rejects(db.query("select public.team_write(null,null,$1::jsonb,'建立')",[doc]),/尚未完成/);
+ await db.query("select public.team_complete_profile('管理者')");status=(await db.query('select public.team_access_status() as s')).rows[0].s;assert.equal(status.admin,true);const project=(await db.query("select * from public.team_write(null,null,$1::jsonb,'建立')",[doc])).rows[0];
+ await db.query("select public.team_access_set('member@example.com',true)");await db.query("select public.team_member($1,'member@example.com','editor')",[project.id]);await assert.rejects(db.query("select public.team_access_set('ayers1101@gmail.com',false)"),/管理者權限/);
+ await as(member);assert.equal((await db.query('select * from public.team_projects')).rows.length,0);await assert.rejects(db.query("select public.team_complete_profile('成員')"),/先設定個人密碼/);
+ await db.exec('reset role');await db.query("update auth.users set encrypted_password='set-by-auth' where id=$1",[member]);await as(member);await db.query("select public.team_complete_profile('成員')");assert.equal((await db.query('select * from public.team_projects')).rows.length,1);await assert.rejects(db.query("select public.team_access_set('stranger@example.com',true)"),/只有系統管理者/);await assert.rejects(db.query("insert into public.team_access(email) values('forged@example.com')"),/permission denied/);await assert.rejects(db.query("select * from team_private.team_write(null,null,$1::jsonb,'繞過')",[doc]),/permission denied/);
+ await as(stranger);assert.equal((await db.query('select public.team_access_status() as s')).rows[0].s.allowed,false);await assert.rejects(db.query("select public.team_complete_profile('未邀請者')"),/未獲准/);await assert.rejects(db.query("select public.team_write(null,null,$1::jsonb,'自行建立')",[doc]),/未獲准/);assert.equal((await db.query('select * from public.team_projects')).rows.length,0);
+ await as(admin);await db.query("select public.team_access_set('member@example.com',false)");assert.equal((await db.query('select * from public.team_access_events')).rows.length,2);
+ await as(member);assert.equal((await db.query('select * from public.team_projects')).rows.length,0);await assert.rejects(db.query("select public.team_write($1,1,$2::jsonb,'停用後修改')",[project.id,doc]),/未獲准/);await assert.rejects(db.query("select public.team_restore($1,1,now(),'停用後還原')",[project.id]),/只有擁有者/);assert.equal((await db.query('select * from public.team_versions')).rows.length,0);
+ }finally{await db.close();}
+});
