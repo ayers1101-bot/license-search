@@ -64,3 +64,11 @@ export const teamConfig = {
 ## 子任務與排序更新
 
 多人版任務預設呈現階層，可由主任務向下建立三層子任務，並拖曳 ⠿ 或使用上下按鈕調整同層順序。編輯視窗可變更上層任務，介面會防止循環及超深。排序沿用既有 `team_write`、樂觀版本檢查及快照歷史，不需重跑 SQL。版本還原會恢復當時的任務層級與順序；還原舊版本時，沒有 `parentId` 的任務視為主任務。僅檢視成員看得到階層，但不提供新增、編輯與排序控制。
+
+## 註冊出現 email rate limit exceeded
+
+這表示 Supabase Auth 寄送驗證信的頻率／額度已達限制，與任務版本或密碼格式無關。不要重複按註冊；請查看 Authentication 的 Logs 與 Rate Limits，確認限制及寄信情況。實際限制依 Supabase 方案與寄信設定為準。
+
+供多人測試時，建議在 Supabase Authentication 的 Email／SMTP 設定使用自訂 SMTP（例如公司允許的寄信服務）。通常需設定寄件者 Email、SMTP Host、Port、Username 與 Password，並依供應商要求完成寄件網域驗證。密碼只填在 Supabase 後台，不要放進前端設定、GitHub 或聊天。這是帳號驗證信，不會啟用行動方案的自動通知，也不要求 Outlook 登入。
+
+若管理者要先為少量已確認身分的同事建立測試帳號，可檢查 Authentication → Users → Add user → Create new user（不是寄送邀請）。若後台提供 Auto Confirm，可由管理者對已確認身分的測試者使用，再透過公司安全管道交付獨立密碼；不是在公開網站停用所有帳號的 Email 驗證。建立後請用網站登入，並確認私人專案隔離與共享權限。

@@ -1,3 +1,4 @@
+import {teamErrorMessage} from './team-errors.js';
 import {taskDepth, withTreeTask, parentSelect, renderTaskTree, bindTaskTree, moveSibling, descendants, deleteBranch} from './task-tree.js';
 import * as api from './team-api.js';
 const $=s=>document.querySelector(s),esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -5,7 +6,7 @@ const labels={todo:'待開始',doing:'進行中',done:'已完成'},roles={owner:
 let newParent=null;
 let me=null,projects=[],selected=null,versions=[],events=[],mode='',taskId=null,busy=false;
 function message(text){$('#team-message').textContent=text;}
-async function action(fn){if(busy)return;busy=true;const disabled=[...document.querySelectorAll('button')].map(el=>[el,el.disabled]);disabled.forEach(([el])=>el.disabled=true);try{message('');await fn();}catch(e){message(e.message+'\n若是版本衝突，請保留未儲存內容，再關閉視窗重新載入。');}finally{busy=false;disabled.forEach(([el,value])=>el.disabled=value);}}
+async function action(fn){if(busy)return;busy=true;const disabled=[...document.querySelectorAll('button')].map(el=>[el,el.disabled]);disabled.forEach(([el])=>el.disabled=true);try{message('');await fn();}catch(e){message(teamErrorMessage(e));}finally{busy=false;disabled.forEach(([el,value])=>el.disabled=value);}}
 function role(p){return p.owner_id===me.id?'owner':p.myRole;}
 async function loadProjects(keep=selected?.id){projects=await api.query('team_projects?select=*&order=updated_at.desc');const members=await api.query('team_members?select=project_id,role&user_id=eq.'+me.id);for(const p of projects)p.myRole=members.find(m=>m.project_id===p.id)?.role;selected=projects.find(p=>p.id===keep)||projects[0]||null;renderProjects();await loadDetail();}
 function renderProjects(){$('#shared-projects').innerHTML=projects.map(p=>`<button data-project="${p.id}" class="${p.id===selected?.id?'selected':''}">${esc(p.document.name)}<small style="display:block">${roles[role(p)]} · v${p.revision}</small></button>`).join('')||'<p>尚無專案。</p>';}
