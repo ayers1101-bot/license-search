@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check public/app.js && node --check public/people.js && node --check public/team.js && node --check public/team-api.js",
+    "check": "node --check server.mjs && node --check public/app.js && node --check public/people.js && node --check public/team.js && node --check public/team-api.js && node --check public/task-tree.js",
     "test": "node --test"
   },
   "engines": {

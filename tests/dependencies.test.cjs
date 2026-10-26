@@ -6,9 +6,10 @@ function workspace(){
  const elements=new Map();
  const element=id=>{if(!elements.has(id))elements.set(id,{value:'',innerHTML:'',textContent:'',hidden:false,classList:{add(){},remove(){},toggle(){}},addEventListener(){},reset(){},removeAttribute(){},showModal(){},close(){},elements:new Proxy({},{get:(o,k)=>o[k]??(o[k]={value:'',setCustomValidity(){},reportValidity(){}})})});return elements.get(id);};
  const context=vm.createContext({Date,Intl,Map,Set,Number,String,Object,Array,Math,JSON,RegExp,Error,crypto:require('node:crypto').webcrypto,localStorage:{getItem(){return null},setItem(key,value){this.saved=value;}},document:{querySelector:element,querySelectorAll(){return []}},setTimeout(){},clearTimeout(){},confirm(){return true},FormData:class{constructor(form){this.data=form.data;}[Symbol.iterator](){return this.data[Symbol.iterator]();}getAll(name){return this.data.filter(([key])=>key===name).map(([,value])=>value);}}});
- // Load the pure module into the VM, then evaluate the application without its ESM import.
+ // Load the pure modules into the VM, then evaluate the application without ESM imports.
+ vm.runInContext(fs.readFileSync('public/task-tree.js','utf8').replace(/^export /gm,''),context);
  vm.runInContext(fs.readFileSync('public/people.js','utf8').replaceAll('export function ', 'function '),context);
- vm.runInContext(fs.readFileSync('public/app.js','utf8').replace(/^import .*?;\n/, ''),context);
+ vm.runInContext(fs.readFileSync('public/app.js','utf8').replace(/^import .*?;\n/gm, ''),context);
  const run=code=>vm.runInContext(code,context);
  run(`state.tasks=[{id:'a',projectId:'website',title:'需求 <A>',start:'2026-11-01',due:'2026-11-03',status:'todo',priority:'high'}, {id:'b',projectId:'website',title:'設計',start:'2026-11-04',due:'2026-11-06',status:'doing',priority:'medium',predecessors:['a']},{id:'c',projectId:'website',title:'製作',start:'2026-11-07',due:'2026-11-10',status:'todo',priority:'medium',predecessors:['b']},{id:'other',projectId:'launch',title:'別案',status:'todo',priority:'low'}]`);
  return {run,element};
