@@ -5,9 +5,13 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check public/app.js"
+    "check": "node --check server.mjs && node --check public/app.js && node --check public/people.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "exceljs": "4.4.0"
   }
 }
