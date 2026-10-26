@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check public/app.js && node --check public/people.js",
+    "check": "node --check server.mjs && node --check public/app.js && node --check public/people.js && node --check public/team.js && node --check public/team-api.js",
     "test": "node --test"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
     "exceljs": "4.4.0"
   }
 }

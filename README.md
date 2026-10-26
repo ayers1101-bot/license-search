@@ -48,3 +48,7 @@ npm start
 ## Netlify 部署
 
 匯入 GitHub 儲存庫 `ayers1101-bot/license-search`，部署分支選 `main`。`netlify.toml` 已指定發布目錄 `public`，不需要 build command 或環境變數。推送至 main 後由 Netlify 自動部署。
+
+## 多人協作測試版
+
+入口為 `/team.html`，提供 Supabase Email 帳號、個人及共享專案、編輯／檢視角色、不可由一般帳號改寫的版本紀錄、擁有者審閱及時間點還原。啟用需要建立 Supabase 專案並執行資料庫初始化，完整步驟見 [SETUP-TEAM.md](SETUP-TEAM.md)。尚未設定服務時不開放登入。多人工作區與原有個人原型分開，不自動搬移資料。

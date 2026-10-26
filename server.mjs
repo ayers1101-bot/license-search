@@ -2,6 +2,7 @@ import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 const assets = {'/':'index.html','/app.js':'app.js','/styles.css':'styles.css','/people.js':'people.js','/vendor/exceljs.min.js':'vendor/exceljs.min.js'};
+for(const name of ['team.html','team.css','team.js','team-api.js','team-config.js']) assets['/'+name]=name;
 const types = {html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8'};
 const server=http.createServer(async(req,res)=>{
  const path=new URL(req.url,'http://localhost').pathname;
