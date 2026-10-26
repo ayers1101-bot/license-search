@@ -20,6 +20,7 @@ function render(){
  $('#stats').innerHTML=[['專案任務',tasks.length,'▤',''],['進行中',doing,'◷',''],['已完成',done,'✓',`<small>${percent}% 完成率</small><div class="progress-track"><div class="progress-fill" style="width:${percent}%"></div></div>`],['已逾期',late,'⚑','']].map(([name,n,icon,extra])=>`<div class="stat"><span class="stat-name">${name}</span><span class="stat-icon">${icon}</span><span class="stat-number">${n}${extra}</span></div>`).join('');
  const selected=$('#assignee-filter').value;const people=[...new Set(scopeTasks().map(t=>t.assignee).filter(Boolean))].sort();$('#assignee-filter').innerHTML='<option value="">所有負責人</option>'+people.map(p=>`<option value="${escape(p)}">${escape(p)}</option>`).join('');$('#assignee-filter').value=people.includes(selected)?selected:'';
  renderTasks();
+ renderReadyTasks();
 }
 function scopeTasks(){return ['resources','gantt'].includes(view)&&$('#analysis-scope').value==='all'?state.tasks:projectTasks();}
 function filtered(){const query=$('#search').value.trim().toLocaleLowerCase(),person=$('#assignee-filter').value;return scopeTasks().filter(t=>(!person||t.assignee===person)&&(!query||`${t.title} ${t.description||''} ${t.assignee||''}`.toLocaleLowerCase().includes(query)));}
@@ -27,6 +28,31 @@ function filtered(){const query=$('#search').value.trim().toLocaleLowerCase(),pe
 function predecessorIds(task){return Array.isArray(task.predecessors)?[...new Set(task.predecessors.filter(id=>typeof id==='string'))]:[];}
 function predecessors(task){return predecessorIds(task).map(id=>state.tasks.find(t=>t.id===id&&t.projectId===task.projectId)).filter(Boolean);}
 function successors(task){return state.tasks.filter(t=>t.projectId===task.projectId&&predecessorIds(t).includes(task.id));}
+// A handoff is explicit: only waiting tasks with every predecessor complete qualify.
+function readyToStart(task){
+ const ids=predecessorIds(task);
+ return task.status==='todo'&&ids.length>0&&!dependencyError(task)&&predecessors(task).every(t=>t.status==='done');
+}
+function renderReadyTasks(){
+ const ready=projectTasks().filter(readyToStart);
+ $('#handoff-panel').hidden=!ready.length;
+ $('#handoff-list').innerHTML=ready.map(t=>`<li><div><strong>${escape(t.title)}</strong><small>${escape(t.assignee||'未指派')} · 所有前置任務已完成</small></div><button type="button" class="primary" data-start-next="${escape(t.id)}" aria-label="開始接續任務：${escape(t.title)}">開始接續</button></li>`).join('');
+}
+function completionNotice(task,previousStatus){
+ if(previousStatus==='done'||task.status!=='done')return '';
+ const ready=successors(task).filter(readyToStart);
+ return ready.length?`；${ready.length} 項任務可接續，請於「可接續任務」按下開始接續`:'';
+}
+function updateTaskStatus(task,status){
+ const previousStatus=task.status;task.status=status;
+ const notice=completionNotice(task,previousStatus),saved=save();render();
+ if(saved)toast('任務狀態已更新'+notice);
+}
+function startNextTask(id){
+ const task=state.tasks.find(t=>t.id===id&&t.projectId===current);
+ if(!task||!readyToStart(task)){render();toast('此任務目前無法接續，請確認狀態及前置任務');return;}
+ updateTaskStatus(task,'doing');
+}
 function dependencyError(task){
  const ids=predecessorIds(task);
  for(const id of ids){
@@ -54,10 +80,11 @@ function renderTasks(){const analysis=['resources','gantt'].includes(view);$('#a
 function showProject(){ $('#project-view').hidden=false;$('#mail-view').hidden=true;$('#projects-nav').classList.add('active');$('#mail-nav').classList.remove('active');render();}
 function openTask(id=null,status='todo'){editing=id;const form=$('#task-form');form.reset();form.elements.due.setCustomValidity('');const task=id?state.tasks.find(t=>t.id===id):{status,priority:'medium',projectId:current};if(!task)return;renderDependencyEditor(task);for(const name of ['title','description','assignee','start','due','hours','status','priority'])form.elements[name].value=task[name]??'';$('#dialog-title').textContent=id?'編輯任務':'新增任務';$('#delete-task').hidden=!id;$('#task-dialog').showModal();}
 $('#project-list').addEventListener('click',e=>{const button=e.target.closest('[data-project]');if(!button)return;current=button.dataset.project;$('#search').value='';$('#assignee-filter').value='';showProject();});
+$('#handoff-list').addEventListener('click',e=>{const button=e.target.closest('[data-start-next]');if(button)startNextTask(button.dataset.startNext);});
 $('#projects-nav').onclick=showProject;
 $('#mail-nav').onclick=()=>{$('#project-view').hidden=true;$('#mail-view').hidden=false;$('#projects-nav').classList.remove('active');$('#mail-nav').classList.add('active');$('#breadcrumb').textContent='Outlook 整合';};
 $('#add-task').onclick=()=>openTask();$('#add-project').onclick=()=>{$('#project-form').reset();$('#project-dialog').showModal();};
-$('#task-form').onsubmit=e=>{e.preventDefault();const formData=new FormData(e.target);const data=Object.fromEntries(formData);data.predecessors=formData.getAll('predecessors');data.title=data.title.trim();data.assignee=data.assignee.trim();if(data.start&&data.due&&data.start>data.due){e.target.elements.due.setCustomValidity('截止日期不可早於起始日');e.target.elements.due.reportValidity();return;}data.hours=data.hours===''?'':Number(data.hours);if(!data.title){e.target.elements.title.setCustomValidity('請輸入任務名稱');e.target.elements.title.reportValidity();return;}const task={...data,id:editing||crypto.randomUUID(),projectId:editing?state.tasks.find(t=>t.id===editing).projectId:current};const relationError=dependencyError(task);$('#dependency-error').textContent=relationError;if(relationError)return;if(editing){state.tasks=state.tasks.map(t=>t.id===editing?task:t);}else state.tasks.push(task);const saved=save();$('#task-dialog').close();render();if(saved)toast('任務已儲存');};
+$('#task-form').onsubmit=e=>{e.preventDefault();const formData=new FormData(e.target);const data=Object.fromEntries(formData);data.predecessors=formData.getAll('predecessors');data.title=data.title.trim();data.assignee=data.assignee.trim();if(data.start&&data.due&&data.start>data.due){e.target.elements.due.setCustomValidity('截止日期不可早於起始日');e.target.elements.due.reportValidity();return;}data.hours=data.hours===''?'':Number(data.hours);if(!data.title){e.target.elements.title.setCustomValidity('請輸入任務名稱');e.target.elements.title.reportValidity();return;}const task={...data,id:editing||crypto.randomUUID(),projectId:editing?state.tasks.find(t=>t.id===editing).projectId:current};const relationError=dependencyError(task);$('#dependency-error').textContent=relationError;if(relationError)return;const previousStatus=editing?state.tasks.find(t=>t.id===editing).status:null;if(editing){state.tasks=state.tasks.map(t=>t.id===editing?task:t);}else state.tasks.push(task);const notice=completionNotice(task,previousStatus),saved=save();$('#task-dialog').close();render();if(saved)toast('任務已儲存'+notice);};
 for(const name of ['start','due'])$('#task-form').elements[name].oninput=()=>$('#task-form').elements.due.setCustomValidity('');
 $('#task-form').elements.title.oninput=e=>e.target.setCustomValidity('');
 $('#delete-task').onclick=()=>{if(!editing)return;const linked=state.tasks.filter(t=>predecessorIds(t).includes(editing)).length;if(!confirm(`確定刪除這個任務？${linked?`另有 ${linked} 項接續任務，其前置連結也會移除。`:''}此操作無法復原。`))return;state.tasks=state.tasks.filter(t=>t.id!==editing).map(t=>({...t,predecessors:predecessorIds(t).filter(id=>id!==editing)}));const saved=save();$('#task-dialog').close();render();if(saved)toast('任務已刪除');};
@@ -68,10 +95,10 @@ document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{view=b.datase
 $('#search').oninput=renderTasks;$('#assignee-filter').onchange=renderTasks;
 $('#tasks').addEventListener('click',e=>{const add=e.target.closest('[data-new]'),task=e.target.closest('[data-task]');if(add)openTask(null,add.dataset.new);else if(task)openTask(task.dataset.task);});
 $('#tasks').addEventListener('keydown',e=>{const task=e.target.closest('article[data-task]');if(task&&['Enter',' '].includes(e.key)){e.preventDefault();openTask(task.dataset.task);}});
-$('#tasks').addEventListener('change',e=>{const id=e.target.dataset.statusTask;if(!id)return;const task=state.tasks.find(t=>t.id===id);if(task&&Object.hasOwn(statuses,e.target.value)){task.status=e.target.value;const saved=save();render();if(saved)toast('任務狀態已更新');}});
+$('#tasks').addEventListener('change',e=>{const id=e.target.dataset.statusTask;if(!id)return;const task=state.tasks.find(t=>t.id===id);if(task&&Object.hasOwn(statuses,e.target.value)){updateTaskStatus(task,e.target.value);}});
 $('#tasks').addEventListener('dragstart',e=>{const card=e.target.closest('[data-task]');if(!card)return;dragged=card.dataset.task;e.dataTransfer.setData('text/plain',dragged);e.dataTransfer.effectAllowed='move';card.classList.add('dragging');});
 $('#tasks').addEventListener('dragover',e=>{const col=e.target.closest('[data-status]');if(!col||!dragged)return;e.preventDefault();document.querySelectorAll('.drop-active').forEach(c=>c.classList.remove('drop-active'));col.classList.add('drop-active');});
-$('#tasks').addEventListener('drop',e=>{const col=e.target.closest('[data-status]');if(!col||!dragged)return;e.preventDefault();const task=state.tasks.find(t=>t.id===dragged);if(task){task.status=col.dataset.status;const saved=save();render();if(saved)toast('任務狀態已更新');}dragged=null;});
+$('#tasks').addEventListener('drop',e=>{const col=e.target.closest('[data-status]');if(!col||!dragged)return;e.preventDefault();const task=state.tasks.find(t=>t.id===dragged);if(task){updateTaskStatus(task,col.dataset.status);}dragged=null;});
 $('#tasks').addEventListener('dragend',()=>{dragged=null;document.querySelectorAll('.drop-active,.dragging').forEach(c=>c.classList.remove('drop-active','dragging'));});
 $('#preview-mail').onclick=()=>$('#mail-dialog').showModal();
 $('#range-start').value=today();$('#range-end').value=relativeDate(29);
