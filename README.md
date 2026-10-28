@@ -66,3 +66,7 @@ npm start
 ## 管理者邀請制（取代自行註冊）
 
 新增 Email 允許名單、首次設定顯示名稱及密碼、管理者核准／停用，以及 Netlify 伺服器邀請信端點。需要另套用增量 SQL 與後台設定；請依 [SETUP-INVITES.md](SETUP-INVITES.md) 執行，不要重跑原初始化。
+
+## 多人與個人規劃功能一致
+
+多人版已補齊人力分析、任務相依、甘特圖、看板／清單、搜尋篩選、工時優先、Excel 名冊與提醒設定，沿用原本權限與版本儲存，不需重跑 SQL。詳見 [FEATURE-PARITY.md](FEATURE-PARITY.md)。
