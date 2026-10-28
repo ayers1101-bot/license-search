@@ -1,4 +1,4 @@
-import {planningAnalysis,predecessorIds as planningPredecessorIds,getPredecessors,getSuccessors,dependencyProblem,isReady,describeDependencies} from './planning.js';
+import {bindGanttZoom,planningAnalysis,predecessorIds as planningPredecessorIds,getPredecessors,getSuccessors,dependencyProblem,isReady,describeDependencies} from './planning.js';
 import {taskDepth, withTreeTask, parentSelect, renderTaskTree, bindTaskTree, moveSibling, descendants, deleteBranch} from './task-tree.js';
 import {planImport, resolvePerson, activeReminder} from './people.js';
 const KEY='teamflow.prototype.v1';
@@ -13,7 +13,7 @@ function valid(data){return data&&Array.isArray(data.projects)&&data.projects.le
 let state;let storageError=false;
 try{const raw=localStorage.getItem(KEY);state=raw?JSON.parse(raw):seed();if(!valid(state))throw Error('Invalid stored data');}catch{state=seed();storageError=true;}
 state.people=Array.isArray(state.people)?state.people:[];
-let current=state.projects[0].id,view='board',editing=null,dragged=null;
+let current=state.projects[0].id,view='board',ganttZoom=100,editing=null,dragged=null;
 function toast(message){$('#toast').textContent=message;$('#toast').classList.add('visible');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').classList.remove('visible'),3500);}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state));return true;}catch{toast('瀏覽器無法儲存，這次變更僅保留在目前頁面');return false;}}
 function projectTasks(){return state.tasks.filter(t=>t.projectId===current);}
@@ -93,7 +93,7 @@ for(const id of ['analysis-scope','range-start','range-end'])$('#'+id).onchange=
 render();if(storageError)toast('無法讀取儲存資料，已載入示範內容');
 
 function renderAnalysis(tasks){
- const result=planningAnalysis({tasks,allTasks:state.tasks,projects:state.projects,view,startDate:$('#range-start').value,endDate:$('#range-end').value,todayDate:today()});
+ const result=planningAnalysis({tasks,allTasks:state.tasks,projects:state.projects,view,startDate:$('#range-start').value,endDate:$('#range-end').value,todayDate:today(),zoomPercent:ganttZoom});
  $('#tasks').className='analysis-panel';$('#tasks').innerHTML=result.html;$('#range-error').textContent=result.error;
 }
 
@@ -136,3 +136,5 @@ bindTaskTree($('#tasks'),{
  onMove:(id,target,after)=>{try{if(id===target)return;const previous=state.tasks;state.tasks=moveSibling(state.tasks,id,target,after);if(!save()){state.tasks=previous;return;}render();toast('任務順序已儲存');}catch(e){toast(e.message);}},
  onError:e=>toast(e.message)
 });
+
+bindGanttZoom($('#tasks'),{getZoom:()=>ganttZoom,onZoom:value=>{ganttZoom=value;renderAnalysis(filtered());}});

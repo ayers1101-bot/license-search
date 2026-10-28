@@ -53,12 +53,42 @@ export function ganttTimeline({tasks,allTasks=tasks,start,end}){
  for(const task of source)model(task);
  const visible=new Set(),matched=new Set(tasks.map(ganttKey));
  for(const task of tasks){const item=models.get(ganttKey(task));if(item.range&&(item.range.end<start||item.range.start>end))continue;let node=task;const seen=new Set();while(node&&!seen.has(ganttKey(node))){const key=ganttKey(node);seen.add(key);visible.add(key);node=node.parentId?lookup.get(ganttKey({...node,id:node.parentId})):null;}}
- const rows=ganttHierarchy(source).filter(({task})=>visible.has(ganttKey(task))).map(({task,depth})=>({...models.get(ganttKey(task)),depth,context:!matched.has(ganttKey(task))}));
+ let familyIndex=-1,familyKey='',familyName='';
+ const rows=ganttHierarchy(source).map(({task,depth})=>{if(depth===0){familyIndex++;familyKey=ganttKey(task);familyName=task.title||'未命名任務';}return {...models.get(ganttKey(task)),depth,familyIndex,familyKey,familyName,context:!matched.has(ganttKey(task))};}).filter(({task})=>visible.has(ganttKey(task)));
  return {rows,missing:tasks.filter(t=>!models.get(ganttKey(t)).range),models};
 }
 const ganttDate=day=>new Date(day*86400000).toISOString().slice(0,10);
+export function ganttZoomPercent(value){const number=Number(value);return Number.isFinite(number)&&number>0?Math.max(25,Math.min(200,Math.round(number/25)*25)):100;}
+export function ganttCellWidth(value){return 38*ganttZoomPercent(value)/100;}
+export const ganttFamilyPalette=[
+ {background:'#edf4e8',accent:'#62834e'}, {background:'#eaf1fa',accent:'#527fa6'},
+ {background:'#f1ecf8',accent:'#8a6ba5'}, {background:'#faf0e3',accent:'#b18145'},
+ {background:'#e7f4f1',accent:'#4a8b80'}, {background:'#faedf1',accent:'#aa6d83'},
+ {background:'#eef0fa',accent:'#707fb2'}, {background:'#f5f4e5',accent:'#96904b'}
+];
+export function ganttHeaderCells(start,end,zoomPercent,todayDate){
+ const width=ganttCellWidth(zoomPercent),months=[],ticks=[];let offset=0;
+ for(let day=start;day<=end;day++){const month=ganttDate(day).slice(0,7),last=months.at(-1);if(last?.month===month)last.days++;else months.push({month,days:1});}
+ while(start+offset<=end){const first=start+offset,weekday=new Date(first*86400000).getUTCDay(),length=zoomPercent>=75?1:Math.min((8-weekday)%7||7,end-first+1),last=first+length-1;
+  const date=ganttDate(first),label=zoomPercent>=75?date.slice(5).replace('-','/'):length>=4?date.slice(5).replace('-','/'):String(Number(date.slice(8)));
+  ticks.push(`<span class="gantt-day ${todayDate>=date&&todayDate<=ganttDate(last)?'is-today':''}" style="--tick-width:${length*width}px" title="${date}${length>1?' 至 '+ganttDate(last):''}">${label}</span>`);offset+=length;
+ }
+ return `<div class="gantt-calendar" style="width:${(end-start+1)*width}px"><div class="gantt-months">${months.map(m=>`<span style="width:${m.days*width}px" title="${m.month}">${m.month.replace('-',' / ')}</span>`).join('')}</div><div class="gantt-days">${ticks.join('')}</div></div>`;
+}
+export function bindGanttZoom(host,{getZoom,onZoom}){
+ function change(value,focus){
+  const old=ganttZoomPercent(getZoom()),next=ganttZoomPercent(value);if(old===next)return;
+  const scroll=host.querySelector('.gantt-scroll'),left=scroll?.scrollLeft||0,visible=Math.max(0,(scroll?.clientWidth||240)-240),center=(left+visible/2)/ganttCellWidth(old);
+  onZoom(next);
+  const updated=host.querySelector('.gantt-scroll');if(updated)updated.scrollLeft=left===0?0:Math.max(0,center*ganttCellWidth(next)-visible/2);
+  const target=host.querySelector(focus);(target&&!target.disabled?target:host.querySelector('[data-gantt-zoom-slider]'))?.focus({preventScroll:true});
+ }
+ host.addEventListener('click',e=>{const button=e.target.closest('[data-gantt-zoom]');if(!button)return;e.preventDefault();const action=button.dataset.ganttZoom;change(action==='reset'?100:ganttZoomPercent(getZoom())+(action==='in'?25:-25),`[data-gantt-zoom="${action}"]`);});
+ host.addEventListener('input',e=>{if(!e.target.matches('[data-gantt-zoom-slider]'))return;const value=host.querySelector('[data-gantt-zoom-value]');if(value)value.textContent=ganttZoomPercent(e.target.value)+'%';});
+ host.addEventListener('change',e=>{if(e.target.matches('[data-gantt-zoom-slider]'))change(e.target.value,'[data-gantt-zoom-slider]');});
+}
 const numberLabel=n=>new Intl.NumberFormat('zh-TW',{maximumFractionDigits:1}).format(n);
-export function planningAnalysis({tasks,allTasks=tasks,projects,view,startDate,endDate,todayDate}){
+export function planningAnalysis({tasks,allTasks=tasks,projects,view,startDate,endDate,todayDate,zoomPercent=100}){
  const start=dayNumber(startDate),end=dayNumber(endDate),days=end-start+1;
  const error=!Number.isFinite(start)||!Number.isFinite(end)?'請填寫完整的日期區間。':days<1?'區間迄日不可早於起日。':days>366?'請選擇 366 天以內的區間。':'';
  if(error)return {error,html:'<div class="empty">請調整日期區間以查看分析。</div>'};
@@ -66,26 +96,26 @@ export function planningAnalysis({tasks,allTasks=tasks,projects,view,startDate,e
  const projectName=t=>projects.find(p=>p.id===t.projectId)?.name||'未分類案件';
  const unscheduled=missing.length?`<div class="schedule-missing"><h3>待補排程 · ${missing.length} 項</h3><p>缺少起始日、截止日或日期順序不正確，尚未計入日期區間分析。點擊任務即可補齊。</p><div>${missing.map(t=>`<button class="secondary" data-task="${escape(t.id)}" data-analysis-project="${escape(t.projectId||'')}">${escape(t.title)} · ${escape(projectName(t))}</button>`).join('')}</div></div>`:'';
  if(view==='gantt'){
-  const timeline=ganttTimeline({tasks,allTasks,start,end}),ordered=timeline.rows;
+  const timeline=ganttTimeline({tasks,allTasks,start,end}),ordered=timeline.rows,zoom=ganttZoomPercent(zoomPercent),cellWidth=ganttCellWidth(zoom);
   const pending=timeline.missing.length?`<div class="schedule-missing"><h3>待補排程 · ${timeline.missing.length} 項</h3><p>這些任務尚無有效時程；有子任務的任務若可彙總，會直接顯示摘要範圍。</p><div>${timeline.missing.map(t=>`<button class="secondary" data-task="${escape(t.id)}" data-analysis-project="${escape(t.projectId||'')}">${escape(t.title)} · ${escape(projectName(t))}</button>`).join('')}</div></div>`:'';
-  const labels=Array.from({length:days},(_,i)=>{const date=ganttDate(start+i);return `<span class="gantt-day ${date===todayDate?'is-today':''}" title="${date}">${date.slice(5).replace('-','/')}</span>`;}).join('');
-  const rows=ordered.map(item=>{
-   const {task:t,range:d,isSummary,depth,context}=item,inRange=d&&d.start<=end&&d.end>=start;
+  const calendar=ganttHeaderCells(start,end,zoom,todayDate);
+  const rows=ordered.map((item,index)=>{
+   const {task:t,range:d,isSummary,depth,context}=item,color=ganttFamilyPalette[item.familyIndex%ganttFamilyPalette.length],groupStart=index===0||ordered[index-1].familyKey!==item.familyKey,inRange=d&&d.start<=end&&d.end>=start;
    const rangeText=d?`${ganttDate(d.start)} 至 ${ganttDate(d.end)}`:'尚無有效排程';
    const title=`${t.title}：${isSummary?'摘要 ':''}${rangeText} · ${statuses[t.status]||'未設定'}${isSummary?'（顯示彙總，未修改原日期）':''}`;
-   const style=inRange?`left:${(Math.max(start,d.start)-start)*38+2}px;width:${(Math.min(end,d.end)-Math.max(start,d.start)+1)*38-4}px`:'';
+   const style=inRange?`left:${(Math.max(start,d.start)-start)*cellWidth+2}px;width:${(Math.min(end,d.end)-Math.max(start,d.start)+1)*cellWidth-4}px`:'';
    const bar=inRange?`<button class="gantt-bar ${escape(t.status||'todo')} ${isSummary?'gantt-summary':''}" style="${style}" data-task="${escape(t.id)}" data-analysis-project="${escape(t.projectId||'')}" data-display-start="${ganttDate(d.start)}" data-display-end="${ganttDate(d.end)}" title="${escape(title)}" aria-label="編輯 ${escape(title)}">${escape(t.title)}</button>`:`<span class="gantt-unplanned">${d?'時程在目前區間外':'待補排程'}</span>`;
    const badge=isSummary?'<span class="gantt-summary-badge">摘要</span>':'';
    const original=isSummary?`<small class="gantt-original">原日期：${escape(t.start||'未設定')} → ${escape(t.due||'未設定')}</small>`:'';
    const warning=item.incomplete?`<small class="gantt-incomplete">${item.source==='manual-fallback'?(item.range?'子任務尚無有效排程，暫顯原日期':'子任務尚無有效排程，摘要待補'):`${item.missingCount} 項下層任務待補排程，摘要尚未完整`}</small>`:'';
-   return `<div class="gantt-row ${isSummary?'gantt-summary-row':''} ${context?'gantt-context-row':''}" data-gantt-id="${escape(t.id)}" data-gantt-project="${escape(t.projectId||'')}" data-gantt-depth="${depth}" style="--gantt-depth:${Math.min(depth,6)}"><button class="gantt-label" data-task="${escape(t.id)}" data-analysis-project="${escape(t.projectId||'')}"><strong>${depth?'<span class="gantt-branch" aria-hidden="true">↳</span>':''}${escape(t.title)} ${badge}</strong><small>${escape(projectName(t))} · ${escape(t.assignee||'未指派')} · ${statuses[t.status]||'未設定'}${context?' · 上層脈絡':''}</small>${original}${warning}${describeDependencies(t,allTasks)}</button><div class="gantt-track" style="width:${days*38}px">${bar}</div></div>`;
+   return `<div class="gantt-row ${isSummary?'gantt-summary-row':''} ${context?'gantt-context-row':''} ${groupStart?'gantt-group-start':''}" data-gantt-group="${escape(item.familyKey)}" data-gantt-family="${escape(item.familyName)}" data-gantt-id="${escape(t.id)}" data-gantt-project="${escape(t.projectId||'')}" data-gantt-depth="${depth}" style="--gantt-depth:${Math.min(depth,6)};--gantt-group-bg:${color.background};--gantt-group-accent:${color.accent}"><button class="gantt-label" data-task="${escape(t.id)}" data-analysis-project="${escape(t.projectId||'')}"><strong>${depth?'<span class="gantt-branch" aria-hidden="true">↳</span>':''}${escape(t.title)} ${badge}</strong><small>${escape(projectName(t))} · ${escape(t.assignee||'未指派')} · ${statuses[t.status]||'未設定'}${context?' · 上層脈絡':''}</small>${original}${warning}${describeDependencies(t,allTasks)}</button><div class="gantt-track" style="width:${days*cellWidth}px">${bar}</div></div>`;
   }).join('');
   const connections=ordered.flatMap((item,index)=>{
    const target=item.range;if(!target||target.start>end||target.end<start)return [];
-   return getPredecessors(item.task,allTasks).flatMap(parent=>{const source=ordered.findIndex(row=>ganttKey(row.task)===ganttKey(parent));if(source<0)return [];const origin=ordered[source].range;if(!origin||origin.start>end||origin.end<start)return [];const x1=240+(Math.min(end,origin.end)-start+1)*38-2,x2=240+(Math.max(start,target.start)-start)*38+2,y1=44+source*100+33,y2=44+index*100+33,bend=Math.max(x1+12,x2-12);return [`<path d="M ${x1} ${y1} H ${bend} V ${y2} H ${x2}" marker-end="url(#dependency-arrow)"><title>${escape(parent.title)} → ${escape(item.task.title)}</title></path>`];});
+   return getPredecessors(item.task,allTasks).flatMap(parent=>{const source=ordered.findIndex(row=>ganttKey(row.task)===ganttKey(parent));if(source<0)return [];const origin=ordered[source].range;if(!origin||origin.start>end||origin.end<start)return [];const x1=240+(Math.min(end,origin.end)-start+1)*cellWidth-2,x2=240+(Math.max(start,target.start)-start)*cellWidth+2,y1=44+source*100+33,y2=44+index*100+33,bend=Math.max(x1+12,x2-12);return [`<path d="M ${x1} ${y1} H ${bend} V ${y2} H ${x2}" marker-end="url(#dependency-arrow)"><title>${escape(parent.title)} → ${escape(item.task.title)}</title></path>`];});
   }).join('');
-  const arrows=connections?`<svg class="gantt-connections" width="${240+days*38}" height="${44+ordered.length*100}" aria-hidden="true"><defs><marker id="dependency-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z"/></marker></defs>${connections}</svg>`:'';
-  const html=`<div class="analysis-heading"><div><h2>案件甘特圖</h2><p>${ordered.length} 項任務（含上層脈絡） · ${escape(startDate)} — ${escape(endDate)}</p></div><div class="gantt-legend"><span>待開始</span><span>進行中</span><span>已完成</span><span class="summary-legend">摘要時程</span></div></div><p class="analysis-note">任務依階層分組，同層保留已儲存的排序。摘要條涵蓋所有有效下層時程，只改顯示、不改寫原日期；原日期顯示於名稱下方。篩選會保留上層脈絡，摘要仍包含被篩選隱藏的子任務。相依箭頭僅連接目前區間內有時程的任務。點擊可編輯任務。</p>${ordered.length?`<div class="gantt-scroll" tabindex="0" role="region" aria-label="案件甘特圖，可左右捲動"><div class="gantt" style="min-width:${240+days*38}px"><div class="gantt-row gantt-header"><div class="gantt-label">任務階層 / 案件 / 負責人</div><div class="gantt-days">${labels}</div></div>${rows}${arrows}</div></div>`:'<div class="empty">此區間沒有符合條件的排程任務，可新增任務或調整日期與篩選條件。</div>'}${pending}`;
+  const arrows=connections?`<svg class="gantt-connections" width="${240+days*cellWidth}" height="${44+ordered.length*100}" aria-hidden="true"><defs><marker id="dependency-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z"/></marker></defs>${connections}</svg>`:'';
+  const html=`<div class="analysis-heading"><div><h2>案件甘特圖</h2><p>${ordered.length} 項任務（含上層脈絡） · ${escape(startDate)} — ${escape(endDate)}</p></div><div class="gantt-legend"><span>待開始</span><span>進行中</span><span>已完成</span><span class="summary-legend">摘要時程</span></div></div><p class="analysis-note">同一主任務與子任務使用同一背景色塊，不同任務群組以色帶區隔；狀態仍由任務長條表示。同層保留已儲存的排序。摘要條涵蓋所有有效下層時程，只改顯示、不改寫原日期；原日期顯示於名稱下方。篩選會保留上層脈絡，摘要仍包含被篩選隱藏的子任務。相依箭頭僅連接目前區間內有時程的任務。點擊可編輯任務。</p><div class="gantt-zoom-controls" role="group" aria-label="甘特圖縮放"><span>縮放</span><button type="button" class="secondary" data-gantt-zoom="out" aria-label="縮小甘特圖" ${zoom===25?'disabled':''}>−</button><input type="range" min="25" max="200" step="25" value="${zoom}" data-gantt-zoom-slider aria-label="甘特圖縮放比例"><output data-gantt-zoom-value aria-live="polite">${zoom}%</output><button type="button" class="secondary" data-gantt-zoom="in" aria-label="放大甘特圖" ${zoom===200?'disabled':''}>＋</button><button type="button" class="secondary" data-gantt-zoom="reset">重設 100%</button><small>${zoom<75?'週刻度':'日刻度'}</small></div>${ordered.length?`<div class="gantt-scroll" tabindex="0" role="region" aria-label="案件甘特圖，可左右捲動"><div class="gantt" data-gantt-zoom-percent="${zoom}" style="min-width:${240+days*cellWidth}px;--gantt-day-width:${cellWidth}px"><div class="gantt-row gantt-header"><div class="gantt-label">任務階層 / 案件 / 負責人</div>${calendar}</div>${rows}${arrows}</div></div>`:'<div class="empty">此區間沒有符合條件的排程任務，可新增任務或調整日期與篩選條件。</div>'}${pending}`;
   return {html,error:''};
  }
 
