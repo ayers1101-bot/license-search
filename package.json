@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check server.mjs && node --check public/app.js && node --check public/people.js && node --check public/team.js && node --check public/team-api.js && node --check public/task-tree.js && node --check public/team-errors.js && node --check netlify/functions/team-invite.mjs && node --check public/planning.js && node --check public/team-workspace.js",
+    "check": "node --check server.mjs && node --check public/app.js && node --check public/people.js && node --check public/team.js && node --check public/team-history.js && node --check public/team-api.js && node --check public/task-tree.js && node --check public/team-errors.js && node --check netlify/functions/team-invite.mjs && node --check public/planning.js && node --check public/team-workspace.js",
     "test": "node --test"
   },
   "engines": {

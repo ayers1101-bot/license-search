@@ -19,6 +19,18 @@ test('database enforces membership, immutable history, concurrent edits, review 
  const firstTime=(await db.query('select created_at::text as t from public.team_versions where id=$1',[history[0].id])).rows[0].t;
  await db.query('select public.team_restore($1,2,$2::timestamptz,$3)',[p.id,firstTime,'回復原始版本']);const restored=(await db.query('select * from public.team_projects')).rows[0];assert.equal(restored.revision,3);assert.equal(restored.document.name,'Project');assert.equal(restored.document.tasks[0].hours,8);assert.deepEqual(restored.document.tasks.find(t=>t.id==='child').predecessors,['root']);assert.equal(restored.document.tasks[0].reminders.todo.frequency,'daily');assert.equal(restored.document.tasks[0].id,'root');assert.equal(restored.document.tasks.find(t=>t.id==='third').parentId,'grand');assert.equal((await db.query('select * from public.team_versions')).rows.length,3);
  await assert.rejects(db.query("select public.team_restore($1,3,'2000-01-01','不存在的時間')",[p.id]),/尚無專案版本/);await assert.rejects(db.query("select public.team_restore($1,3,'2999-01-01','未來時間')",[p.id]),/晚於現在/);
+ // Restore forward to the pre-restore latest state, keeping all snapshots immutable.
+ const secondTime=(await db.query('select created_at::text as t from public.team_versions where id=$1',[history[1].id])).rows[0].t;
+ await as(1);await assert.rejects(db.query('select public.team_restore($1,3,$2::timestamptz,$3)',[p.id,secondTime,'共同編輯不可撤銷還原']),/只有擁有者/);
+ await as(0);await assert.rejects(db.query('select public.team_restore($1,2,$2::timestamptz,$3)',[p.id,secondTime,'過期的撤銷還原']),/版本衝突/);
+ await db.query('select public.team_restore($1,3,$2::timestamptz,$3)',[p.id,secondTime,'撤銷還原，恢復原本最新內容']);
+ const forward=(await db.query('select * from public.team_projects')).rows[0];assert.equal(forward.revision,4);assert.deepEqual(forward.document,body);
+ const afterUndo=(await db.query('select * from public.team_versions order by revision')).rows;
+ assert.equal(afterUndo.length,4);assert.equal(afterUndo[3].restored_from,history[1].id);assert.deepEqual(afterUndo[0].document,history[0].document);assert.deepEqual(afterUndo[1].document,history[1].document);assert.deepEqual(afterUndo[2].document,restored.document);
+ // The undo is itself reversible, including after another restore has occurred.
+ const thirdTime=(await db.query('select created_at::text as t from public.team_versions where revision=3')).rows[0].t;
+ await db.query('select public.team_restore($1,4,$2::timestamptz,$3)',[p.id,thirdTime,'再次回到還原後內容']);
+ const again=(await db.query('select * from public.team_projects')).rows[0];assert.equal(again.revision,5);assert.deepEqual(again.document,restored.document);assert.equal((await db.query('select * from public.team_versions')).rows.length,5);
  await db.query("select public.team_member($1,'editor@example.com','remove')",[p.id]);await as(1);assert.equal((await db.query('select * from public.team_projects')).rows.length,0);await assert.rejects(db.query('select public.team_write($1,3,$2::jsonb,$3)',[p.id,JSON.stringify(body),'已移除']),/沒有編輯權限/);
  await db.exec('reset role;set role anon');await assert.rejects(db.query('select * from public.team_projects'),/permission denied/);
  }finally{await db.close();}
